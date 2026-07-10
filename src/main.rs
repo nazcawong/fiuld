@@ -13,7 +13,7 @@ lazy_static::lazy_static! {
 }
 
 fn init_debug_log() -> Result<(), Box<dyn std::error::Error>> {
-    let log_path = "/kaggle/working/fiuld_debug.log";
+    let log_path = "/kaggle/working/prism_debug.log";
     let file = File::create(log_path)?;
     let mut log = DEBUG_LOG.lock().unwrap();
     *log = Some(file);
@@ -663,21 +663,21 @@ impl DslAction {
 // ============================================================================
 
 fn main() {
-    println!("🚀 Fiuld - ARC-AGI-3 Rust Agent");
+    println!("🚀 prism - ARC-AGI-3 Rust Agent");
     let start = Instant::now();
 
     // Initialize debug log
     if let Err(e) = init_debug_log() {
         eprintln!("⚠️ Failed to init debug log: {}", e);
     }
-    debug_log("Fiuld engine starting");
+    debug_log("prism engine starting");
 
     // 命令列參數
     let args: Vec<String> = std::env::args().collect();
     
     if args.len() < 3 {
         eprintln!("Usage: {} <test.json> <output.json>", args[0]);
-        eprintln!("Example: fiuld /kaggle/input/arc-prize-2026/test.json submission.json");
+        eprintln!("Example: prism /kaggle/input/arc-prize-2026/test.json submission.json");
         std::process::exit(1);
     }
 

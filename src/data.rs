@@ -126,7 +126,7 @@ mod tests {
 
     #[test]
     fn test_load_dataset_with_test_output() {
-        let temp_file = "/tmp/fiuld_test_with_output.json";
+        let temp_file = "/tmp/prism_test_with_output.json";
         create_sample_json(temp_file, true);
 
         let dataset = load_dataset(temp_file).expect("無法載入資料集");
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn test_load_dataset_without_test_output() {
-        let temp_file = "/tmp/fiuld_test_no_output.json";
+        let temp_file = "/tmp/prism_test_no_output.json";
         create_sample_json(temp_file, false);
 
         let dataset = load_dataset(temp_file).expect("無法載入資料集");
@@ -183,7 +183,7 @@ mod tests {
         submissions.insert("task_0_test_0".to_string(), vec![vec![1, 2], vec![3, 4]]);
         submissions.insert("task_1_test_0".to_string(), vec![vec![5, 5, 5]]);
 
-        let temp_file = "/tmp/fiuld_submission.json";
+        let temp_file = "/tmp/prism_submission.json";
         save_submissions(&submissions, temp_file).expect("無法儲存 submission");
 
         // 驗證檔案存在且內容正確

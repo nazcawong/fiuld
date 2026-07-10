@@ -1,0 +1,16 @@
+{
+  "id": "nazcawong/prism-v2-0-flat-grid-arc-agi-3-solver",
+  "title": "prism v2 0 Flat Grid Arc Agi 3 Solver",
+  "code_file": "run_prism_mission.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "machine_shape": "",
+  "dataset_sources": ["nazcawong/prism-binary-dataset"],
+  "competition_sources": ["arc-prize-2026-arc-agi-3"],
+  "kernel_sources": [],
+  "model_sources": []
+}
