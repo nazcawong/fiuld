@@ -37,21 +37,25 @@ mod genetic;
 mod reflection;
 
 // ============================================================================
-// 核心資料結構：Grid (網格)
+// 核心資料結構：Grid (Flat layout for cache-friendly & SIMD access)
 // ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Grid {
-    pub data: Vec<Vec<i32>>,
+    pub data: Vec<i32>,  // Flat: data[r * width + c]
     pub height: usize,
     pub width: usize,
 }
 
 impl Grid {
+    #[inline]
+    fn idx(r: usize, c: usize, width: usize) -> usize {
+        r * width + c
+    }
+
     pub fn new(height: usize, width: usize, fill_value: i32) -> Self {
-        let data = vec![vec![fill_value; width]; height];
         Grid {
-            data,
+            data: vec![fill_value; height * width],
             height,
             width,
         }
@@ -60,57 +64,56 @@ impl Grid {
     pub fn from_vec(vec: Vec<Vec<i32>>) -> Self {
         let height = vec.len();
         let width = if height > 0 { vec[0].len() } else { 0 };
-        Grid {
-            data: vec,
-            height,
-            width,
-        }
+        let flat: Vec<i32> = vec.into_iter().flatten().collect();
+        Grid { data: flat, height, width }
     }
 
+    #[inline]
     pub fn get(&self, r: usize, c: usize) -> i32 {
         if r < self.height && c < self.width {
-            self.data[r][c]
+            self.data[Self::idx(r, c, self.width)]
         } else {
-            0 // 背景色
+            0
         }
     }
 
+    #[inline]
     pub fn set(&mut self, r: usize, c: usize, value: i32) {
         if r < self.height && c < self.width {
-            self.data[r][c] = value;
+            self.data[Self::idx(r, c, self.width)] = value;
         }
     }
 
-    /// 計算兩個網格的 exact match ratio
+    /// 計算兩個網格的 exact match ratio (flat layout = SIMD friendly)
     pub fn match_ratio(&self, other: &Grid) -> f64 {
         if self.height != other.height || self.width != other.width {
             return 0.0;
         }
         let total = (self.height * self.width) as f64;
-        let matches = (0..self.height)
-            .map(|r| {
-                (0..self.width)
-                    .filter(|&c| self.data[r][c] == other.data[r][c])
-                    .count() as f64
-            })
-            .sum::<f64>();
+        let matches = self.data.iter().zip(&other.data)
+            .filter(|&(a, b)| a == b)
+            .count() as f64;
         matches / total
     }
 
-    /// 複製網格
     pub fn clone(&self) -> Grid {
-        Grid {
-            data: self.data.clone(),
-            height: self.height,
-            width: self.width,
+        Grid { data: self.data.clone(), height: self.height, width: self.width }
+    }
+
+    pub fn print(&self) {
+        for r in 0..self.height {
+            let row: Vec<String> = (0..self.width)
+                .map(|c| format!("{:2}", self.get(r, c)))
+                .collect();
+            println!("{}", row.join(" "));
         }
     }
 
-    /// 打印網格 (除錯用)
-    pub fn print(&self) {
-        for row in &self.data {
-            println!("{}", row.iter().map(|v| format!("{:2}", v)).collect::<Vec<_>>().join(" "));
-        }
+    /// 將 grid 轉回 Vec<Vec<i32>> (用於輸出)
+    pub fn to_vec(&self) -> Vec<Vec<i32>> {
+        (0..self.height)
+            .map(|r| self.data[r * self.width .. (r + 1) * self.width].to_vec())
+            .collect()
     }
 }
 
@@ -431,81 +434,82 @@ pub enum DslAction {
 }
 
 impl DslAction {
-    /// 將 DSL 動作套用至網格
+    #[inline]
+    fn idx(r: usize, c: usize, width: usize) -> usize {
+        r * width + c
+    }
+
+    /// 將 DSL 動作套用至網格 (Flat layout optimized)
+    #[inline]
     pub fn apply(&self, grid: &mut Grid) -> bool {
         match self {
             DslAction::Fill { color, x, y, w, h } => {
-                for r in *y..(*y + *h).min(grid.height) {
-                    for c in *x..(*x + *w).min(grid.width) {
-                        grid.set(r, c, *color);
+                let end_r = (*y + *h).min(grid.height);
+                let end_c = (*x + *w).min(grid.width);
+                for r in *y..end_r {
+                    let row_start = Self::idx(r, 0, grid.width);
+                    for c in *x..end_c {
+                        let idx = row_start + c;
+                        grid.data[idx] = *color;
                     }
                 }
                 true
             }
             DslAction::DrawLine { color, x1, y1, x2, y2 } => {
-                // Bresenham 畫線
                 let dx = (*x2 as i32 - *x1 as i32).abs();
                 let dy = (*y2 as i32 - *y1 as i32).abs();
                 let sx = if *x1 <= *x2 { 1 } else { -1 };
                 let sy = if *y1 <= *y2 { 1 } else { -1 };
-                let mut err = dx - dy;
+                let mut err = dx as i32 - dy as i32;
                 let mut cx = *x1 as i32;
                 let mut cy = *y1 as i32;
 
-                loop {
-                    if cx >= 0 && cx < grid.width as i32 && cy >= 0 && cy < grid.height as i32 {
-                        grid.set(cx as usize, cy as usize, *color);
-                    }
-                    if cx == *x2 as i32 && cy == *y2 as i32 {
-                        break;
+                while (cx != *x2 as i32 || cy != *y2 as i32) && cx >= 0 && cx < grid.width as i32 && cy >= 0 && cy < grid.height as i32 {
+                    if cy < (grid.height) as i32 && cx < grid.width as i32 {
+                        let idx = Self::idx(cy as usize, cx as usize, grid.width);
+                        grid.data[idx] = *color;
                     }
                     let e2 = 2 * err;
-                    if e2 > -dy {
-                        err -= dy;
-                        cx += sx;
-                    }
-                    if e2 < dx {
-                        err += dx;
-                        cy += sy;
-                    }
+                    if e2 > -dy as i32 { err -= dy as i32; cx += sx; }
+                    if e2 < dx as i32 { err += dx as i32; cy += sy; }
                 }
                 true
             }
             DslAction::DrawRect { color, x, y, w, h } => {
-                for r in *y..(*y + *h).min(grid.height) {
-                    for c in *x..(*x + *w).min(grid.width) {
+                let end_r = (*y + *h).min(grid.height);
+                let end_c = (*x + *w).min(grid.width);
+                for r in *y..end_r {
+                    let row_start = Self::idx(r, 0, grid.width);
+                    for c in *x..end_c {
                         if r == *y || r == (*y + *h - 1) || c == *x || c == (*x + *w - 1) {
-                            grid.set(r, c, *color);
+                            grid.data[row_start + c] = *color;
                         }
                     }
                 }
                 true
             }
             DslAction::ColorSwap { from_color, to_color } => {
-                for r in 0..grid.height {
-                    for c in 0..grid.width {
-                        if grid.data[r][c] == *from_color {
-                            grid.data[r][c] = *to_color;
-                        }
+                // Hot path: direct flat slice iteration (SIMD-friendly)
+                for pixel in grid.data.iter_mut() {
+                    if *pixel == *from_color {
+                        *pixel = *to_color;
                     }
                 }
                 true
             }
             DslAction::Clear => {
-                for r in 0..grid.height {
-                    for c in 0..grid.width {
-                        grid.data[r][c] = 0;
-                    }
-                }
+                grid.data.iter_mut().for_each(|p| *p = 0);
                 true
             }
             DslAction::Rotate90 => {
                 let new_h = grid.width;
                 let new_w = grid.height;
-                let mut new_data = vec![vec![0; new_w]; new_h];
+                let mut new_data = vec![0i32; new_h * new_w];
                 for r in 0..grid.height {
+                    let row_start = Self::idx(r, 0, grid.width);
                     for c in 0..grid.width {
-                        new_data[c][new_h - 1 - r] = grid.data[r][c];
+                        let src = row_start + c;
+                        new_data[Self::idx(c, new_h - 1 - r, new_w)] = grid.data[src];
                     }
                 }
                 grid.data = new_data;
@@ -514,10 +518,13 @@ impl DslAction {
                 true
             }
             DslAction::Rotate180 => {
-                let mut new_data = vec![vec![0; grid.width]; grid.height];
+                let mut new_data = vec![0i32; grid.height * grid.width];
                 for r in 0..grid.height {
+                    let row_start = Self::idx(r, 0, grid.width);
                     for c in 0..grid.width {
-                        new_data[grid.height - 1 - r][grid.width - 1 - c] = grid.data[r][c];
+                        let src = row_start + c;
+                        new_data[Self::idx(grid.height - 1 - r, grid.width - 1 - c, grid.width)] =
+                            grid.data[src];
                     }
                 }
                 grid.data = new_data;
@@ -526,10 +533,12 @@ impl DslAction {
             DslAction::Rotate270 => {
                 let new_h = grid.width;
                 let new_w = grid.height;
-                let mut new_data = vec![vec![0; new_w]; new_h];
+                let mut new_data = vec![0i32; new_h * new_w];
                 for r in 0..grid.height {
+                    let row_start = Self::idx(r, 0, grid.width);
                     for c in 0..grid.width {
-                        new_data[new_w - 1 - c][r] = grid.data[r][c];
+                        let src = row_start + c;
+                        new_data[Self::idx(new_w - 1 - c, r, new_w)] = grid.data[src];
                     }
                 }
                 grid.data = new_data;
@@ -538,39 +547,43 @@ impl DslAction {
                 true
             }
             DslAction::FlipHorizontal => {
-                let mut new_data = vec![vec![0; grid.width]; grid.height];
+                let mut new_data = vec![0i32; grid.height * grid.width];
                 for r in 0..grid.height {
+                    let row_start = Self::idx(r, 0, grid.width);
                     for c in 0..grid.width {
-                        new_data[r][grid.width - 1 - c] = grid.data[r][c];
+                        new_data[row_start + (grid.width - 1 - c)] = grid.data[row_start + c];
                     }
                 }
                 grid.data = new_data;
                 true
             }
             DslAction::FlipVertical => {
-                let mut new_data = vec![vec![0; grid.width]; grid.height];
+                let mut new_data = vec![0i32; grid.height * grid.width];
                 for r in 0..grid.height {
-                    for c in 0..grid.width {
-                        new_data[grid.height - 1 - r][c] = grid.data[r][c];
-                    }
+                    let src_start = Self::idx(r, 0, grid.width);
+                    let dst_start = Self::idx(grid.height - 1 - r, 0, grid.width);
+                    new_data[dst_start..dst_start + grid.width].copy_from_slice(&grid.data[src_start..src_start + grid.width]);
                 }
                 grid.data = new_data;
                 true
             }
             DslAction::Scale { factor } => {
                 let f = *factor as usize;
-                if f == 0 {
+                if f == 0 || grid.data.is_empty() {
                     return true;
                 }
                 let new_h = grid.height * f;
                 let new_w = grid.width * f;
-                let mut new_data = vec![vec![0; new_w]; new_h];
+                let mut new_data = vec![0i32; new_h * new_w];
                 for r in 0..grid.height {
+                    let row_start = Self::idx(r, 0, grid.width);
                     for c in 0..grid.width {
-                        let color = grid.data[r][c];
+                        let color = grid.data[row_start + c];
                         for dr in 0..f {
                             for dc in 0..f {
-                                new_data[r * f + dr][c * f + dc] = color;
+                                let nr = r * f + dr;
+                                let nc = c * f + dc;
+                                new_data[Self::idx(nr, nc, new_w)] = color;
                             }
                         }
                     }
@@ -588,11 +601,12 @@ impl DslAction {
                 if new_h <= 0 || new_w <= 0 {
                     return true;
                 }
-                let mut new_data = vec![vec![0; new_w]; new_h];
+                let mut new_data = vec![0i32; new_h * new_w];
                 for r in 0..new_h {
-                    for c in 0..new_w {
-                        new_data[r][c] = grid.data[*y + r][*x + c];
-                    }
+                    let src_row = *y + r;
+                    let src_start = Self::idx(src_row, *x, grid.width);
+                    new_data[Self::idx(r, 0, new_w)..Self::idx(r, new_w, new_w)]
+                        .copy_from_slice(&grid.data[src_start..src_start + new_w]);
                 }
                 grid.data = new_data;
                 grid.height = new_h;
@@ -602,11 +616,11 @@ impl DslAction {
             DslAction::Pad { top, bottom, left, right, color } => {
                 let new_h = grid.height + top + bottom;
                 let new_w = grid.width + left + right;
-                let mut new_data = vec![vec![*color; new_w]; new_h];
+                let mut new_data = vec![*color; new_h * new_w];
                 for r in 0..grid.height {
-                    for c in 0..grid.width {
-                        new_data[top + r][left + c] = grid.data[r][c];
-                    }
+                    let src_start = Self::idx(r, 0, grid.width);
+                    let dst_start = Self::idx(top + r, *left, new_w);
+                    new_data[dst_start..dst_start + grid.width].copy_from_slice(&grid.data[src_start..src_start + grid.width]);
                 }
                 grid.data = new_data;
                 grid.height = new_h;
@@ -619,14 +633,17 @@ impl DslAction {
                 if dr == 0 && dc == 0 {
                     return true;
                 }
-                let mut new_data = vec![vec![0; grid.width]; grid.height];
+                let mut new_data = vec![0i32; grid.height * grid.width];
                 for r in 0..grid.height {
+                    let row_start = Self::idx(r, 0, grid.width);
                     for c in 0..grid.width {
-                        let color = grid.data[r][c];
+                        let color = grid.data[row_start + c];
+                        if color == 0 { continue; }
                         let new_r = r as i32 + dr;
                         let new_c = c as i32 + dc;
                         if new_r >= 0 && new_r < grid.height as i32 && new_c >= 0 && new_c < grid.width as i32 {
-                            new_data[new_r as usize][new_c as usize] = color;
+                            let dst = Self::idx(new_r as usize, new_c as usize, grid.width);
+                            new_data[dst] = color;
                         }
                     }
                 }

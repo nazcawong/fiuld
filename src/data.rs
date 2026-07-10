@@ -56,9 +56,14 @@ pub fn grid_data_to_grid(data: &GridData) -> crate::Grid {
     crate::Grid::from_vec(data.clone())
 }
 
-/// 從 Grid 結構轉換為 GridData (用於輸出)
+/// 從 Grid 結構轉換為 GridData (用於輸出) - converts flat Vec<i32> back to nested format
 pub fn grid_to_grid_data(grid: &crate::Grid) -> GridData {
-    grid.data.clone()
+    let mut nested = Vec::with_capacity(grid.height);
+    for r in 0..grid.height {
+        let row_start = r * grid.width;
+        nested.push(grid.data[row_start..row_start + grid.width].to_vec());
+    }
+    nested
 }
 
 #[cfg(test)]
