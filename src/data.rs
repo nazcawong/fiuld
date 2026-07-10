@@ -45,7 +45,9 @@ pub fn load_dataset(file_path: &str) -> Result<ArcDataset, Box<dyn std::error::E
 /// 將結果序列化為 Kaggle 要求的 submission JSON
 pub fn save_submissions(submissions: &HashMap<String, GridData>, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let json = serde_json::to_string_pretty(submissions)?;
-    fs::write(output_path, json)?;
+    let tmp_path = format!("{}.tmp", output_path);
+    fs::write(&tmp_path, &json)?;
+    fs::rename(&tmp_path, output_path)?;
     Ok(())
 }
 

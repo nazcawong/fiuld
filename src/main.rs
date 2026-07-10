@@ -1,8 +1,36 @@
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::Write;
+use std::sync::Mutex;
 use std::time::Instant;
 use rayon::prelude::*;
+
+// Global debug log file
+lazy_static::lazy_static! {
+    static ref DEBUG_LOG: Mutex<Option<File>> = Mutex::new(None);
+}
+
+fn init_debug_log() -> Result<(), Box<dyn std::error::Error>> {
+    let log_path = "/kaggle/working/fiuld_debug.log";
+    let file = File::create(log_path)?;
+    let mut log = DEBUG_LOG.lock().unwrap();
+    *log = Some(file);
+    Ok(())
+}
+
+fn debug_log(msg: &str) {
+    if let Ok(mut log) = DEBUG_LOG.lock() {
+        if let Some(ref mut file) = *log {
+            let _ = writeln!(file, "{} {}", std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0), msg);
+            let _ = file.flush();
+        }
+    }
+}
 
 mod data;
 mod genetic;
@@ -621,6 +649,12 @@ fn main() {
     println!("🚀 Fiuld - ARC-AGI-3 Rust Agent");
     let start = Instant::now();
 
+    // Initialize debug log
+    if let Err(e) = init_debug_log() {
+        eprintln!("⚠️ Failed to init debug log: {}", e);
+    }
+    debug_log("Fiuld engine starting");
+
     // 命令列參數
     let args: Vec<String> = std::env::args().collect();
     
@@ -634,18 +668,27 @@ fn main() {
     let output_path = &args[2];
 
     println!("📂 Loading test data from: {}", test_path);
+    debug_log(&format!("Loading test data from: {}", test_path));
 
     // 讀取並解析 JSON
-    let dataset = data::load_dataset(test_path)
-        .expect("無法解析 ARC 資料集 JSON");
+    let dataset = match data::load_dataset(test_path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("❌ Failed to load dataset: {}", e);
+            debug_log(&format!("Failed to load dataset: {}", e));
+            std::process::exit(1);
+        }
+    };
 
     println!("✅ Loaded {} tasks from {}", dataset.len(), test_path);
+    debug_log(&format!("Loaded {} tasks", dataset.len()));
 
     // 統計訓練/測試資料
     let total_train = dataset.values().map(|t| t.train.len()).sum::<usize>();
     let total_test = dataset.values().map(|t| t.test.len()).sum::<usize>();
     println!("   Training examples: {}", total_train);
     println!("   Test cases: {}", total_test);
+    debug_log(&format!("Training examples: {}, Test cases: {}", total_train, total_test));
 
     // 建立求解器 (9 小時限制)
     let solver = Solver::new(8.5 * 3600.0);
@@ -657,10 +700,12 @@ fn main() {
         println!("\n🔍 Processing task: {}", task_id);
         println!("   Training pairs: {}", task.train.len());
         println!("   Test cases: {}", task.test.len());
+        debug_log(&format!("Processing task: {} ({} train, {} test)", task_id, task.train.len(), task.test.len()));
 
         for (test_idx, test_case) in task.test.iter().enumerate() {
             let key = format!("{}_test_{}", task_id, test_idx);
             println!("   Solving test_{}...", test_idx);
+            debug_log(&format!("Solving {}", key));
             
             let solution = solver.solve(test_case, &task.train);
             results.insert(key, solution);
@@ -668,6 +713,7 @@ fn main() {
     }
 
     println!("\n✅ All tasks processed!");
+    debug_log(&format!("All tasks processed! Total: {}", results.len()));
 
     // 輸出結果
     println!("\n🏁 Inference complete! Total time: {:?}", start.elapsed());
@@ -679,10 +725,14 @@ fn main() {
         .map(|(k, v)| (k, data::grid_to_grid_data(&v)))
         .collect();
 
-    data::save_submissions(&submissions, output_path)
-        .expect("無法寫入 submission.json");
+    if let Err(e) = data::save_submissions(&submissions, output_path) {
+        eprintln!("❌ Failed to write submission.json: {}", e);
+        debug_log(&format!("Failed to write submission: {}", e));
+        std::process::exit(1);
+    }
     
     println!("📄 Submission saved to: {}", output_path);
+    debug_log(&format!("Submission saved to: {} ({} predictions)", output_path, submissions.len()));
 }
 
 #[cfg(test)]
